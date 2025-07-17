@@ -1,0 +1,129 @@
+\begin{table*}[t]
+\floatconts
+  {tab:comparison_models_average_precision}
+  {\caption{average-precision\\The best model per training size and per symptom is highlighted in \textbf{bold}. The best baseline model for each class is \underline{underlined}. Cases where a model outperforms the best baseline model significantly are indicated by \textbf{*} ($p < 0.05$ in a one-sided Wilcoxon signed-rank test over 20 seeds).}}
+{
+\resizebox{\textwidth}{!}{
+\begin{tabular}{llcccccccc}
+    \toprule
+    & & \multicolumn{8}{c}{Training size $n$} \\ \cmidrule{3-10}
+    & & \textbf{100} & \textbf{187} & \textbf{350} & \textbf{654} & \textbf{1223} & \textbf{2287} & \textbf{4278} & \textbf{8000}\\
+    %\cmidrule{3-10}
+    \midrule
+    \texttt{dysp} & \textbf{text-only} & 0.8762 & 0.9068 & 0.9206 & 0.9342 & 0.943 & 0.9519 & 0.9552 & 0.961 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & *0.8891 & *0.9122 & *0.9245 & *0.9366 & *0.9455 & 0.9515 & 0.9551 & 0.9616 \\
+    & \textbf{V-BN-text} & *0.8905 & *0.9114 & 0.9204 & *0.94 & \textbf{*0.948} & *0.9553 & *0.9587 & *0.9643 \\
+    & \textbf{V-C-BN-text} & \textbf{*0.8915} & \textbf{*0.9172} & \textbf{*0.9278} & \textbf{*0.9404} & *0.9478 & \textbf{*0.9555} & \textbf{*0.9592} & \textbf{*0.9645} \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & +1.53\% & +1.04\% & +0.72\% & +0.62\% & +0.5\% & +0.36\% & +0.41\% & +0.35\% \\
+    \midrule
+    \texttt{cough} & \textbf{text-only} & 0.825 & 0.8651 & 0.881 & 0.8992 & 0.9144 & 0.9251 & 0.9328 & 0.9345 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & *0.8515 & *0.8847 & *0.902 & *0.9146 & *0.9274 & *0.9353 & *0.9428 & *0.9431 \\
+    & \textbf{V-BN-text} & *0.8574 & \textbf{*0.8942} & \textbf{*0.9106} & \textbf{*0.9254} & \textbf{*0.938} & \textbf{*0.9451} & \textbf{*0.9519} & \textbf{*0.955} \\
+    & \textbf{V-C-BN-text} & \textbf{*0.8586} & *0.8928 & *0.9071 & *0.9193 & *0.9313 & *0.9394 & *0.9471 & *0.95 \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & +3.35\% & +2.92\% & +2.97\% & +2.63\% & +2.36\% & +2.0\% & +1.91\% & +2.05\% \\
+    \midrule
+    \texttt{pain} & \textbf{text-only} & 0.5357 & 0.6195 & 0.6575 & 0.6946 & 0.722 & 0.7349 & 0.7422 & 0.7516 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & \textbf{*0.5467} & \textbf{*0.6262} & \textbf{*0.669} & *0.7031 & *0.7285 & *0.7404 & *0.7493 & *0.7595 \\
+    & \textbf{V-BN-text} & 0.5176 & 0.6106 & 0.6567 & \textbf{*0.714} & \textbf{*0.7473} & \textbf{*0.764} & \textbf{*0.775} & \textbf{*0.7868} \\
+    & \textbf{V-C-BN-text} & 0.538 & 0.6228 & *0.6632 & *0.7065 & *0.737 & *0.7528 & *0.7613 & *0.7723 \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & +1.1\% & +0.67\% & +1.15\% & +1.94\% & +2.53\% & +2.91\% & +3.27\% & +3.52\% \\
+    \midrule
+    \texttt{nasal} & \textbf{text-only} & 0.8788 & 0.8869 & 0.9013 & 0.9072 & 0.9117 & 0.9097 & 0.9101 & 0.9034 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & *0.9032 & *0.9073 & *0.9205 & *0.927 & *0.9308 & *0.9263 & *0.9288 & *0.9238 \\
+    & \textbf{V-BN-text} & \textbf{*0.9057} & \textbf{*0.9116} & \textbf{*0.9229} & \textbf{*0.9307} & \textbf{*0.9369} & \textbf{*0.9371} & \textbf{*0.9388} & \textbf{*0.9337} \\
+    & \textbf{V-C-BN-text} & *0.8986 & *0.9052 & *0.919 & *0.9238 & *0.9288 & *0.928 & *0.9296 & *0.9231 \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & +2.69\% & +2.47\% & +2.16\% & +2.35\% & +2.52\% & +2.74\% & +2.87\% & +3.03\% \\
+    \midrule
+    \texttt{fever} & \textbf{text-only} & 0.6023 & 0.6524 & 0.6875 & 0.7361 & 0.7714 & 0.7909 & 0.8072 & 0.8161 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & 0.5975 & *0.6562 & *0.6943 & *0.7424 & *0.7761 & *0.7981 & *0.8132 & *0.8243 \\
+    & \textbf{V-BN-text} & \textbf{0.6047} & \textbf{*0.6782} & \textbf{*0.7202} & \textbf{*0.7746} & \textbf{*0.8086} & \textbf{*0.8269} & \textbf{*0.8439} & \textbf{*0.8543} \\
+    & \textbf{V-C-BN-text} & 0.6034 & *0.6671 & *0.7044 & *0.7572 & *0.7915 & *0.8104 & *0.829 & *0.839 \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & +0.23\% & +2.58\% & +3.27\% & +3.86\% & +3.72\% & +3.6\% & +3.67\% & +3.83\% \\
+    \midrule
+    \texttt{mean} & \textbf{text-only} & 0.7436 & 0.7861 & 0.8096 & 0.8342 & 0.8525 & 0.8625 & 0.8695 & 0.8733 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & *0.7576 & *0.7973 & *0.822 & *0.8447 & *0.8617 & *0.8703 & *0.8778 & *0.8825 \\
+    & \textbf{V-BN-text} & *0.7552 & \textbf{*0.8012} & \textbf{*0.8262} & \textbf{*0.857} & \textbf{*0.8758} & \textbf{*0.8857} & \textbf{*0.8937} & \textbf{*0.8988} \\
+    & \textbf{V-C-BN-text} & \textbf{*0.758} & *0.801 & *0.8243 & *0.8495 & *0.8673 & *0.8772 & *0.8853 & *0.8898 \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & +1.44\% & +1.51\% & +1.66\% & +2.27\% & +2.32\% & +2.32\% & +2.42\% & +2.55\% \\
+    \bottomrule
+    \bottomrule
+\end{tabular}}
+}
+\end{table*}
+
+\begin{table*}[t]
+\floatconts
+  {tab:comparison_models_brier}
+  {\caption{brier\\The best model per training size and per symptom is highlighted in \textbf{bold}. The best baseline model for each class is \underline{underlined}. Cases where a model outperforms the best baseline model significantly are indicated by \textbf{*} ($p < 0.05$ in a one-sided Wilcoxon signed-rank test over 20 seeds).}}
+{
+\resizebox{\textwidth}{!}{
+\begin{tabular}{llcccccccc}
+    \toprule
+    & & \multicolumn{8}{c}{Training size $n$} \\ \cmidrule{3-10}
+    & & \textbf{100} & \textbf{187} & \textbf{350} & \textbf{654} & \textbf{1223} & \textbf{2287} & \textbf{4278} & \textbf{8000}\\
+    %\cmidrule{3-10}
+    \midrule
+    \texttt{dysp} & \textbf{text-only} & 0.062 & 0.051 & 0.0452 & 0.0419 & 0.0377 & 0.0337 & 0.032 & 0.028 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & 0.063 & *0.0497 & *0.0443 & *0.0401 & *0.0365 & *0.0326 & *0.031 & *0.0275 \\
+    & \textbf{V-BN-text} & 0.0606 & *0.0492 & 0.0441 & 0.0406 & 0.0373 & 0.0336 & 0.0326 & 0.0305 \\
+    & \textbf{V-C-BN-text} & \textbf{*0.058} & \textbf{*0.0469} & \textbf{*0.0419} & \textbf{*0.038} & \textbf{*0.0349} & \textbf{*0.0312} & \textbf{*0.0296} & \textbf{0.0274} \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & -0.4\% & -0.41\% & -0.34\% & -0.39\% & -0.28\% & -0.25\% & -0.24\% & -0.05\% \\
+    \midrule
+    \texttt{cough} & \textbf{text-only} & 0.137 & 0.1212 & 0.1141 & 0.105 & 0.0973 & 0.0889 & 0.087 & 0.0847 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & *0.12 & *0.1084 & *0.0992 & *0.094 & *0.0872 & *0.081 & *0.0786 & *0.0778 \\
+    & \textbf{V-BN-text} & *0.1213 & \textbf{*0.1039} & \textbf{*0.0958} & \textbf{*0.0886} & \textbf{*0.0818} & \textbf{*0.0754} & \textbf{*0.0721} & \textbf{*0.0694} \\
+    & \textbf{V-C-BN-text} & \textbf{*0.1173} & *0.105 & *0.0965 & *0.091 & *0.0838 & *0.0783 & *0.0756 & *0.0743 \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & -1.97\% & -1.73\% & -1.82\% & -1.64\% & -1.55\% & -1.35\% & -1.49\% & -1.53\% \\
+    \midrule
+    \texttt{pain} & \textbf{text-only} & 0.0955 & 0.0879 & 0.0793 & 0.0753 & 0.0698 & 0.0665 & 0.0657 & 0.0621 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & 0.0982 & 0.0867 & 0.082 & 0.0754 & 0.0703 & 0.0679 & 0.0662 & 0.0628 \\
+    & \textbf{V-BN-text} & 0.1043 & 0.0933 & 0.0869 & 0.0773 & 0.0733 & 0.0694 & 0.067 & 0.0639 \\
+    & \textbf{V-C-BN-text} & \textbf{0.0949} & \textbf{*0.0853} & \textbf{0.0789} & \textbf{*0.072} & \textbf{0.0683} & \textbf{0.0661} & \textbf{0.0641} & \textbf{0.0618} \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & -0.05\% & -0.26\% & -0.04\% & -0.33\% & -0.15\% & -0.04\% & -0.16\% & -0.03\% \\
+    \midrule
+    \texttt{nasal} & \textbf{text-only} & 0.0905 & 0.0847 & 0.0767 & 0.0751 & 0.0708 & 0.0682 & 0.0677 & 0.0688 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & *0.0869 & *0.0817 & *0.0737 & *0.0713 & \textbf{*0.0678} & \textbf{*0.0657} & \textbf{*0.065} & \textbf{*0.0661} \\
+    & \textbf{V-BN-text} & 0.0915 & 0.0832 & 0.0761 & 0.0758 & 0.0712 & 0.0679 & 0.0673 & *0.0668 \\
+    & \textbf{V-C-BN-text} & \textbf{*0.0834} & \textbf{*0.0798} & \textbf{*0.0727} & \textbf{*0.071} & *0.069 & 0.068 & 0.0683 & 0.0694 \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & -0.71\% & -0.48\% & -0.4\% & -0.42\% & -0.3\% & -0.24\% & -0.27\% & -0.27\% \\
+    \midrule
+    \texttt{fever} & \textbf{text-only} & 0.3071 & 0.2887 & 0.2695 & 0.2613 & 0.2388 & 0.2231 & 0.2134 & 0.2041 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & 0.3029 & *0.2743 & *0.2612 & *0.2401 & *0.2222 & *0.2102 & *0.2012 & *0.196 \\
+    & \textbf{V-BN-text} & 0.3233 & 0.2878 & 0.2736 & *0.2437 & *0.2251 & 0.2171 & 0.2051 & 0.2036 \\
+    & \textbf{V-C-BN-text} & \textbf{*0.294} & \textbf{*0.2671} & \textbf{*0.2515} & \textbf{*0.2306} & \textbf{*0.2131} & \textbf{*0.2034} & \textbf{*0.1949} & \textbf{*0.1929} \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & -1.31\% & -2.16\% & -1.8\% & -3.07\% & -2.57\% & -1.97\% & -1.85\% & -1.12\% \\
+    \midrule
+    \texttt{mean} & \textbf{text-only} & 0.1384 & 0.1267 & 0.117 & 0.1117 & 0.1028 & 0.0961 & 0.0932 & 0.0895 \\
+    \cline{2-10}
+    & \textbf{C-BN-text} & *0.1342 & *0.1202 & *0.1121 & *0.1042 & *0.0968 & *0.0915 & *0.0884 & *0.0861 \\
+    & \textbf{V-BN-text} & 0.1402 & *0.1235 & *0.1153 & *0.1052 & *0.0977 & *0.0927 & *0.0888 & *0.0868 \\
+    & \textbf{V-C-BN-text} & \textbf{*0.1295} & \textbf{*0.1168} & \textbf{*0.1083} & \textbf{*0.1005} & \textbf{*0.0938} & \textbf{*0.0894} & \textbf{*0.0865} & \textbf{*0.0852} \\
+    \cline{2-10}
+    & \textbf{change vs. baseline} & -0.89\% & -0.99\% & -0.87\% & -1.12\% & -0.9\% & -0.67\% & -0.67\% & -0.44\% \\
+    \bottomrule
+    \bottomrule
+\end{tabular}}
+}
+\end{table*}

@@ -1,0 +1,28 @@
+\begin{table*}[t]
+\floatconts
+  {tab:comparison_models_average_precision}
+  {\caption{average-precision\\The best model per training size and per symptom is highlighted in \textbf{bold}. The best baseline model for each class is \underline{underlined}. Cases where a model outperforms the best baseline model significantly are indicated by \textbf{*} ($p < 0.05$ in a one-sided Wilcoxon signed-rank test over 20 seeds).}}
+{
+\resizebox{\textwidth}{!}{
+\begin{tabular}{llcccccccc}
+    \toprule
+    & & \multicolumn{8}{c}{Training size $n$} \\ \cmidrule{3-10}
+    & & \textbf{100} & \textbf{187} & \textbf{350} & \textbf{654} & \textbf{1223} & \textbf{2287} & \textbf{4278} & \textbf{8000}\\
+    %\cmidrule{3-10}
+    \midrule
+    \texttt{dysp} & \textbf{text-only} & $92.46\pm1.88$ & $94.82\pm1.14$ & $95.78\pm0.49$ & $96.7\pm0.3$ & $97.31\pm0.28$ & $97.98\pm0.16$ & $98.31\pm0.13$ & $98.78\pm0.12$ \\
+    \midrule
+    \texttt{cough} & \textbf{text-only} & $90.2\pm3.11$ & $94.52\pm0.65$ & $95.71\pm0.48$ & $96.89\pm0.38$ & $97.8\pm0.23$ & $98.26\pm0.14$ & $98.63\pm0.11$ & $98.9\pm0.08$ \\
+    \midrule
+    \texttt{pain} & \textbf{text-only} & $61.81\pm9.03$ & $72.52\pm4.21$ & $76.48\pm2.61$ & $80.4\pm0.95$ & $82.5\pm0.85$ & $83.77\pm0.88$ & $84.71\pm0.89$ & $86.08\pm0.24$ \\
+    \midrule
+    \texttt{nasal} & \textbf{text-only} & $95.12\pm0.59$ & $95.84\pm0.56$ & $96.57\pm0.25$ & $97.06\pm0.17$ & $97.43\pm0.18$ & $97.79\pm0.11$ & $98.0\pm0.1$ & $98.16\pm0.03$ \\
+    \midrule
+    \texttt{fever} & \textbf{text-only} & $69.05\pm4.81$ & $75.01\pm4.12$ & $79.73\pm2.34$ & $86.46\pm0.98$ & $89.86\pm0.65$ & $91.64\pm0.51$ & $93.15\pm0.25$ & $93.93\pm0.21$ \\
+    \midrule
+    \texttt{mean} & \textbf{text-only} & $81.73\pm2.39$ & $86.54\pm1.52$ & $88.85\pm0.74$ & $91.5\pm0.29$ & $92.98\pm0.27$ & $93.89\pm0.18$ & $94.56\pm0.17$ & $95.17\pm0.07$ \\
+    \bottomrule
+    \bottomrule
+\end{tabular}}
+}
+\end{table*}
