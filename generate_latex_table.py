@@ -13,6 +13,8 @@ renames = {
     'gt_bn' : 'GT-only',
     'binary_classifiers' : 'text-only',
     'tabular_text_binary' : 'Concat-text-tab',
+    'mlp_ensemble' : 'MLP-BN-text',
+    'linear_ensemble' : 'L-BN-text',
     'binary_classifiers_data_shift' : 'text-only',
     'weighted_consistency' : 'C-BN-text',
     'virtual' : 'V-BN-text',
@@ -22,12 +24,33 @@ renames = {
     'weighted_consistency_virtual_ground_truth' : 'V-C-BN-text',
     'weighted_consistency_data_shift' : 'C-BN-text',
     'virtual_data_shift' : 'V-BN-text',
-    'weighted_consistency_virtual_data_shift' : 'V-C-BN-text'
+    'weighted_consistency_virtual_data_shift' : 'V-C-BN-text',
+    'bn_additions' : 'BN-add',
+    'weighted_consistency_additions' : 'C-BN-add',
+    'virtual_additions' : 'V-BN-add',
+    'weighted_consistency_virtual_additions' : 'V-C-BN-add',
+    'bn_removals' : 'BN-rem',
+    'weighted_consistency_removals' : 'C-BN-rem',
+    'virtual_removals' : 'V-BN-rem',
+    'weighted_consistency_virtual_removals' : 'V-C-BN-rem',
+    'bn_flips' : 'BN-flip',
+    'weighted_consistency_flips' : 'C-BN-flip',
+    'virtual_flips' : 'V-BN-flip',
+    'weighted_consistency_virtual_flips' : 'V-C-BN-flip'
 }
 
 model_order = list(renames.keys())
 
-baseline_models = ['bn_realistic', 'gt_bn', 'binary_classifiers', 'tabular_text_binary', 'binary_classifiers_data_shift']
+baseline_models = ['bn_realistic', 'gt_bn', 'binary_classifiers', 'tabular_text_binary', 'binary_classifiers_data_shift', 'mlp_ensemble', 'linear_ensemble']
+
+perturbations_groups = [
+    ['bn_realistic', 'bn_additions', 'bn_removals', 'bn_flips'],
+    ['weighted_consistency', 'weighted_consistency_additions', 'weighted_consistency_removals', 'weighted_consistency_flips'],
+    ['virtual', 'virtual_additions', 'virtual_removals', 'virtual_flips'],
+    ['weighted_consistency_virtual', 'weighted_consistency_virtual_additions', 'weighted_consistency_virtual_removals', 'weighted_consistency_virtual_flips']
+]
+
+perturbations_order = [m for r in perturbations_groups for m in r]
 
 def keep_model(model: str) -> bool:
     return (keep_models == 'all' or model in keep_models) and model in renames
@@ -127,7 +150,7 @@ def calculate_symptom_means(data: dict) -> dict:
         metric_data['mean'] = to_dict(mean_dict)
     return data
 
-def analyze_symptom_data(data: dict, symptom: str, mode: str, n_samples: int | None = None, metric: str | None = None) -> dict:
+def analyze_symptom_data(data: dict, symptom: str, mode: str, n_samples: int | None, metric: str | None, perturbations: bool) -> dict:
     """
     data: a dict of form n_samples -> seed -> model iff mode == 'n_samples'
           a dict of form metric -> symptom -> n_samples -> seed -> model iff mode == 'metric'
@@ -155,18 +178,32 @@ def analyze_symptom_data(data: dict, symptom: str, mode: str, n_samples: int | N
                     if keep_model(model):
                         reaggregated_results[model][met].append(val)
     # determine max baseline models
-    max_baseline_models = determine_max_models(reaggregated_results, metric, baseline_models)
+    max_baseline_models = determine_max_models(reaggregated_results, metric, baseline_models) if not perturbations else None
     # determine max across all models
-    max_models = determine_max_models(reaggregated_results, metric)
+    max_models = determine_max_models(reaggregated_results, metric) if not perturbations else None
 
     # generate table entries
     result = defaultdict(dict)
-    num_baselines = len([model for model in reaggregated_results.keys() if model in baseline_models])
+    num_baselines = len([model for model in reaggregated_results.keys() if model in baseline_models]) if not perturbations else None
     for model, model_data in reaggregated_results.items():
         for column, vals in model_data.items():
             val = mean(vals)
             if len(reaggregated_results) == 1:
                 result[model][column] = TableEntry(val, False, False, False)
+            elif perturbations:
+                is_significant = False
+                for group in perturbations_groups:
+                    if model in group:
+                        group_baseline = group[0]
+                        if model != group_baseline:
+                            group_baseline_vals = reaggregated_results[group_baseline][column]
+                            if val_above_baseline(mean(group_baseline_vals), column, vals):
+                                alternative = 'greater' if metric_to_minimizeP(column, metric) else 'less'
+                                _, p_value = wilcoxon(vals, group_baseline_vals, alternative=alternative)
+                                if p_value < 0.05:
+                                    is_significant = True
+                                    break
+                result[model][column] = TableEntry(val, False, is_significant, False)
             else:
                 is_max = model == max_models[column]
                 max_baseline = max_baseline_models[column]
@@ -216,16 +253,19 @@ def change_from_baseline_string(change_from_baseline_data: dict) -> str:
     row_string += ' \\\\\n'
     return row_string
     
-def symptom_subsection(symptom: str, symptom_data: dict, column_mode: str, n_samples: int | None, metric: str | None) -> str:
-    analyzed_data, change_from_baseline_data = analyze_symptom_data(symptom_data, symptom, column_mode, n_samples, metric)
+def symptom_subsection(symptom: str, symptom_data: dict, column_mode: str, n_samples: int | None, metric: str | None, perturbations: bool) -> str:
+    analyzed_data, change_from_baseline_data = analyze_symptom_data(symptom_data, symptom, column_mode, n_samples, metric, perturbations)
 
     subsection = tabstring('\\midrule\n', 2)  
 
     first, drew_baseline = True, False
     for model, row in analyzed_data.items():
-        if model not in baseline_models and not drew_baseline and len(analyzed_data) > 2:
+        if not perturbations and model not in baseline_models and \
+            not drew_baseline and len(analyzed_data) > 2:
             subsection += tabstring('\\cline{' + f'{2}-{len(row)+2}' + '}\n', 2)
             drew_baseline = True
+        elif perturbations and model in [r[0] for r in perturbations_groups[1:]]:
+            subsection += tabstring('\\cline{' + f'{2}-{len(row)+2}' + '}\n', 2)
         mn = dwim_name(model)
         row_string = tabstring('\\texttt{' + symptom + '} & \\textbf{' + mn + '}', 2) if first else \
             tabstring('& \\textbf{' + mn + '}', 2)
@@ -241,7 +281,7 @@ def symptom_subsection(symptom: str, symptom_data: dict, column_mode: str, n_sam
 
     return subsection
 
-def generate_latex_table(data: dict, table_name: str | int, symptoms: list[str], columns: str, data_shift_experiment: bool, mode: str|None) -> str:
+def generate_latex_table(data: dict, table_name: str | int, symptoms: list[str], columns: str, data_shift_experiment: bool, mode: str|None, perturbations: bool) -> str:
     """
     data: a dict of form symptom -> n_samples -> seed -> model iff columns == 'n_samples'
           a dict of form metric -> symptom -> n_samples -> seed -> model iff columns == 'metric'
@@ -255,7 +295,6 @@ def generate_latex_table(data: dict, table_name: str | int, symptoms: list[str],
 
     # begin table
     table = '\\begin{table*}[t]\n'
-    table += '\\floatconts\n'
     # caption
     name = str(table_name)
     if len(symptoms) == 1:
@@ -264,9 +303,9 @@ def generate_latex_table(data: dict, table_name: str | int, symptoms: list[str],
         name += '_data_shift'
     if mode:
         name += '_'+mode
-    table += tabstring(f'{{tab:comparison_models_{name}}}\n')
-    table += tabstring('{\\caption{' + dwim_name(name) + '\\\\The best model per training size and per symptom is highlighted in \\textbf{bold}. The best baseline model for each class is \\underline{underlined}. Cases where a model outperforms the best baseline model significantly are indicated by \\textbf{*} ($p < 0.05$ in a one-sided Wilcoxon signed-rank test over 20 seeds).}}\n')
-    table += '{\n'
+    
+    table += tabstring('\\caption{' + dwim_name(name) + '\\\\The best model per training size and per symptom is highlighted in \\textbf{bold}. The best baseline model for each class is \\underline{underlined}. Cases where a model outperforms the best baseline model significantly are indicated by \\textbf{*} ($p < 0.05$ in a one-sided Wilcoxon signed-rank test over 20 seeds).}\n')
+    table += tabstring(f'\\label{{tab:comparison_models_{name}}}\n')
     table += '\\resizebox{\\textwidth}{!}{\n'
     # tabular
     table += '\\begin{tabular}{ll' + 'c'*n_columns + '}\n'
@@ -281,13 +320,12 @@ def generate_latex_table(data: dict, table_name: str | int, symptoms: list[str],
     for symptom in symptoms:
         symptom_data = data[symptom] if columns == 'n_samples' else data
         n_samples = table_name if columns == 'metric' else None
-        table += symptom_subsection(symptom, symptom_data, columns, n_samples, metric)
+        table += symptom_subsection(symptom, symptom_data, columns, n_samples, metric, perturbations)
     # end tabular
     table += tabstring('\\bottomrule\n', 2)
     table += tabstring('\\bottomrule\n', 2)
     # end table
     table += '\\end{tabular}'
-    table += '}\n'
     table += '}\n'
     table += '\\end{table*}'
 
@@ -329,20 +367,21 @@ def dwim_data_shift_experiment_names(data) -> dict:
                         new_data[metric][symptom][n_samples][seed][new_model] = model_data
     return to_dict(new_data)
 
-def sort_models(data: dict) -> dict:
+def sort_models(data: dict, perturbations) -> dict:
     """
     data: a dict of form metric -> symptom -> n_samples -> seed -> model
     Return data with the models sorted
     """
+    order = model_order if not perturbations else perturbations_order
     sorted_data = defaultdict(factory(4))
     for metric, metric_data in data.items():
         for symptom, symptom_data in metric_data.items():
             for n_samples, n_samples_data in symptom_data.items():
                 for seed, seed_data in n_samples_data.items():
-                    sorted_data[metric][symptom][n_samples][seed] = dict(sorted(seed_data.items(), key=lambda x: model_order.index(x[0])))
+                    sorted_data[metric][symptom][n_samples][seed] = dict(sorted(seed_data.items(), key=lambda x: order.index(x[0])))
     return to_dict(sorted_data)
 
-def generate_latex_tables(data: dict, ms: list[str] | str, ss: list[str] | str, combine: bool, columns: str, mode: str|None = None) -> str:
+def generate_latex_tables(data: dict, ms: list[str] | str, ss: list[str] | str, combine: bool, columns: str, mode: str|None = None, perturbations=False) -> str:
     """
     data: a dict of form metric -> symptom -> n_samples -> seed -> model
     Return a string that will render latex tables consolidating results across each metric + symptom
@@ -350,7 +389,7 @@ def generate_latex_tables(data: dict, ms: list[str] | str, ss: list[str] | str, 
     data_shift_experiment = is_data_shift_experiment(data)
     if data_shift_experiment:
         data = dwim_data_shift_experiment_names(data)
-    data = sort_models(data)
+    data = sort_models(data, perturbations)
     data = calculate_symptom_means(data)
     tables = []
     if columns == 'n_samples':
@@ -358,22 +397,22 @@ def generate_latex_tables(data: dict, ms: list[str] | str, ss: list[str] | str, 
             if ms == 'all' or metric in ms:
                 if combine and (ss == 'all' or len(ss) > 1):
                     symptoms = list(metric_data.keys()) if ss == 'all' else ss
-                    tables.append(generate_latex_table(metric_data, metric, symptoms, columns, data_shift_experiment, mode))
+                    tables.append(generate_latex_table(metric_data, metric, symptoms, columns, data_shift_experiment, mode, perturbations))
                 else:
                     for symptom in metric_data.keys():
                         if ss == 'all' or symptom in ss:
-                            tables.append(generate_latex_table(metric_data, metric, [symptom], columns, data_shift_experiment, mode))
+                            tables.append(generate_latex_table(metric_data, metric, [symptom], columns, data_shift_experiment, mode, perturbations))
     elif columns == 'metric':
         metric_data = next(iter(data.values()))
         symptoms = list(metric_data.keys()) if ss == 'all' else ss
         n_samples_range = metric_data[symptoms[0]].keys()
         for n_samples in n_samples_range:
             if combine:
-                tables.append(generate_latex_table(data, n_samples, symptoms, columns, data_shift_experiment, mode))
+                tables.append(generate_latex_table(data, n_samples, symptoms, columns, data_shift_experiment, mode, perturbations))
             else:
                 for symptom in symptoms:
                     if ss == 'all' or symptom in ss:
-                        tables.append(generate_latex_table(data, n_samples, [symptom], columns, data_shift_experiment, mode))
+                        tables.append(generate_latex_table(data, n_samples, [symptom], columns, data_shift_experiment, mode, perturbations))
     return '\n\n'.join(tables)
 
 if __name__ == "__main__":
@@ -388,22 +427,27 @@ if __name__ == "__main__":
     parser.add_argument('--models', nargs='+', type=str, default='all')
     parser.add_argument('--subsets', action='store_true')
     parser.add_argument('-sd', '--standard_deviation', action='store_true')
+    parser.add_argument('--perturbations', action='store_true')
+    parser.add_argument('--baselines', nargs='+', type=str, default=baseline_models)
     args = parser.parse_args()
 
     filename = args.filename
     with open(filename, 'rb') as file:
         data = pickle.load(file)
 
+    baseline_models = args.baselines
+
     combine = args.combine_symptoms
     columns = args.columns
     filter_uninteresting = args.filter
     keep_models = args.models
     standard_deviation = args.standard_deviation
+    perturbations = args.perturbations
 
     if args.subsets:
         tables = '\n\n'.join([generate_latex_tables(mode_data, args.metrics, args.symptoms, combine, columns, mode) for mode, mode_data in data.items()])
     else:
-        tables = generate_latex_tables(data, args.metrics, args.symptoms, combine, columns)
+        tables = generate_latex_tables(data, args.metrics, args.symptoms, combine, columns, perturbations=perturbations)
 
     with open(args.destination, 'w') as file:
         file.write(tables)

@@ -10,9 +10,9 @@ import argparse
 import torch
 torch.use_deterministic_algorithms(True)
 
-from utils.bayesian_network import TrainedBayesianNetwork, GTBayesianNetwork
+from utils.bayesian_network import TrainedBayesianNetwork, GTBayesianNetwork, AdditionsBayesianNetwork, RemovalsBayesianNetwork, FlipsBayesianNetwork
 from utils.neural_classifier import EmbeddingDataset, train_sympt_classifier, add_all_classifier_predictions_to_df, get_nn_predictions
-from utils.consistency_node import ConsistentBNTextModel
+from utils.consistency_node import ConsistentBNTextModel, EnsembleModel
 
 def factory(n):
     if n:
@@ -93,7 +93,7 @@ def train_text_classifier(df, sympt, device, seed, with_tab=False, emb_type="emb
     else: 
         return text_classifier
 
-def train_BN_classifier(df, seed): 
+def train_BN_classifier(df, seed, type='trained'): 
     """
     Learning Bayesian network parameters from training data. 
     - df: dataframe containing training data
@@ -101,7 +101,16 @@ def train_BN_classifier(df, seed):
     returns: 
     - learn_BN: trained Bayesian network
     """
-    learn_BN = TrainedBayesianNetwork(df, seed)
+    if type == 'trained':
+        learn_BN = TrainedBayesianNetwork(df, seed)
+    elif type == 'additions':
+        learn_BN = AdditionsBayesianNetwork(df, seed)
+    elif type == 'removals':
+        learn_BN = RemovalsBayesianNetwork(df, seed)
+    elif type == 'flips':
+        learn_BN = FlipsBayesianNetwork(df, seed)
+    else:
+        raise Exception(f"BN type {type} not implemented")
     learn_BN.learn_full_BN()
     return learn_BN
 
@@ -117,7 +126,7 @@ def train_consistency(text_classifiers, BN_classifier, calibration_df, symptom, 
 def train_predict_consistency(text_classifiers, BN_classifier, calibration_df, test_df, symptom, device, virtual_evidence=False, weighted_agr=True, emb_type="embedding"):
     consistency_classifier = train_consistency(text_classifiers, BN_classifier, calibration_df, symptom, device, virtual_evidence, weighted_agr)
     consistency_classifier.eval_df = None
-    test_dataset = EmbeddingDataset(test_data, symptom, device, type=emb_type)
+    test_dataset = EmbeddingDataset(test_df, symptom, device, type=emb_type)
     consistency_classifier.add_text_prediction(test_dataset, test_df)
     consistency_classifier.add_BN_prediction("BN_prob", virtual_evidence=virtual_evidence)
     consistency_classifier.combine_prob("BN_prob")
@@ -166,8 +175,11 @@ if __name__ == "__main__":
             calibration_data = train_data.copy()
             data_shift_calibration_data = calibration_data.copy()
 
-            # BN
+            # BNs
             bn = train_BN_classifier(train_data, seed)
+            abn = train_BN_classifier(train_data, seed, type='additions')
+            rbn = train_BN_classifier(train_data, seed, 'removals')
+            fbn = train_BN_classifier(train_data, seed, 'flips')
 
             # NNs
             text_classifiers = {}
@@ -185,6 +197,9 @@ if __name__ == "__main__":
             for symptom in symptoms:
                 # BN predictions
                 results[n_samples][seed]['bn_realistic'][symptom] = test_data.apply(bn.predict_symptom, axis=1, args=(symptom, evidence_keys, False))
+                results[n_samples][seed]['bn_additions'][symptom] = test_data.apply(abn.predict_symptom, axis=1, args=(symptom, evidence_keys, False))
+                results[n_samples][seed]['bn_removals'][symptom] = test_data.apply(rbn.predict_symptom, axis=1, args=(symptom, evidence_keys, False))
+                results[n_samples][seed]['bn_flips'][symptom] = test_data.apply(fbn.predict_symptom, axis=1, args=(symptom, evidence_keys, False))
 
                 # GT predictions
                 results[n_samples][seed]['gt_bn'][symptom] = test_data.apply(gtbn.predict_symptom, axis=1, args=(symptom, evidence_keys, False))
@@ -198,21 +213,40 @@ if __name__ == "__main__":
                 tabular_text_classifier, encoder, scaler = train_text_classifier(train_data, symptom, device, seed, with_tab=True)
                 results[n_samples][seed]['tabular_text_binary'][symptom] = get_nn_predictions(test_data, tabular_text_classifier, symptom, device, with_tab=True, encoder=encoder, scaler=scaler)
 
+                # mlp ensemble predictions
+                mlp_ensemble = EnsembleModel(symptom, 'mlp', seed=seed, text_label=text_label)
+                mlp_ensemble.fit(calibration_data)
+                results[n_samples][seed]['mlp_ensemble'][symptom] = test_data.apply(mlp_ensemble.ensemble_prob, axis=1)
+
+                # linear ensemble predictions
+                linear_ensemble = EnsembleModel(symptom, 'linear', seed=seed, text_label=text_label)
+                linear_ensemble.fit(calibration_data)
+                results[n_samples][seed]['linear_ensemble'][symptom] = test_data.apply(linear_ensemble.ensemble_prob, axis=1)
+
                 # consistency predictions
                 results[n_samples][seed]['weighted_consistency'][symptom] = train_predict_consistency(None, bn, calibration_data, test_data, symptom, device)
                 results[n_samples][seed]['weighted_consistency_data_shift'][symptom] = train_predict_consistency(None, bn, data_shift_calibration_data, data_shift_test_data, symptom, device, emb_type="redacted_embedding")
                 results[n_samples][seed]['weighted_consistency_ground_truth'][symptom] = train_predict_consistency(None, gtbn, calibration_data, test_data, symptom, device)
+                results[n_samples][seed]['weighted_consistency_additions'][symptom] = train_predict_consistency(None, abn, calibration_data, test_data, symptom, device)
+                results[n_samples][seed]['weighted_consistency_removals'][symptom] = train_predict_consistency(None, rbn, calibration_data, test_data, symptom, device)
+                results[n_samples][seed]['weighted_consistency_flips'][symptom] = train_predict_consistency(None, fbn, calibration_data, test_data, symptom, device)
 
                 # VE predictions
                 results[n_samples][seed]['virtual'][symptom] = test_data.apply(bn.predict_symptom, axis=1, args=(symptom, evidence_keys, True))
                 results[n_samples][seed]['virtual_data_shift'][symptom] = data_shift_test_data.apply(bn.predict_symptom, axis=1, args=(symptom, evidence_keys, True))
                 results[n_samples][seed]['virtual_ground_truth'][symptom] = test_data.apply(gtbn.predict_symptom, axis=1, args=(symptom, evidence_keys, True))
+                results[n_samples][seed]['virtual_additions'][symptom] = test_data.apply(abn.predict_symptom, axis=1, args=(symptom, evidence_keys, True))
+                results[n_samples][seed]['virtual_removals'][symptom] = test_data.apply(rbn.predict_symptom, axis=1, args=(symptom, evidence_keys, True))
+                results[n_samples][seed]['virtual_flips'][symptom] = test_data.apply(fbn.predict_symptom, axis=1, args=(symptom, evidence_keys, True))
 
                 # consistency + VE predictions
                 results[n_samples][seed]['weighted_consistency_virtual'][symptom] = train_predict_consistency(None, bn, calibration_data, test_data, symptom, device, virtual_evidence=True)
                 results[n_samples][seed]['weighted_consistency_virtual_data_shift'][symptom] = train_predict_consistency(None, bn, data_shift_calibration_data, data_shift_test_data, symptom, device, emb_type="redacted_embedding", virtual_evidence=True)
                 results[n_samples][seed]['weighted_consistency_virtual_ground_truth'][symptom] = train_predict_consistency(None, gtbn, calibration_data, test_data, symptom, device, virtual_evidence=True)
-    
+                results[n_samples][seed]['weighted_consistency_virtual_additions'][symptom] = train_predict_consistency(None, abn, calibration_data, test_data, symptom, device, virtual_evidence=True)
+                results[n_samples][seed]['weighted_consistency_virtual_removals'][symptom] = train_predict_consistency(None, rbn, calibration_data, test_data, symptom, device, virtual_evidence=True)
+                results[n_samples][seed]['weighted_consistency_virtual_flips'][symptom] = train_predict_consistency(None, fbn, calibration_data, test_data, symptom, device, virtual_evidence=True)
+                
     # save results
     with open(filename+'.p', 'wb') as file:
         pickle.dump(to_dict(results), file)

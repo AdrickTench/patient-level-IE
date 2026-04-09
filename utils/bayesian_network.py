@@ -48,7 +48,11 @@ class NoisyOr(torch.nn.Module):
         super(NoisyOr, self).__init__()
         self.outcome = outcome # name of variable we are modeling
         self.parents = parents # parent variables
-        self.n = len(parents) # number of parents
+        if 'fever' in parents:
+            self.expanded_parents = [x for x in parents if x != 'fever'] + ['fever_low', 'fever_high']
+        else:
+            self.expanded_parents = parents        
+        self.n = len(self.expanded_parents) # number of parents
 
         # learnable parameters
         self.lambda_0 = torch.nn.Parameter(torch.rand(1)) if lambda_0 == None else torch.nn.Parameter(torch.tensor(lambda_0)) # leak probability
@@ -61,6 +65,13 @@ class NoisyOr(torch.nn.Module):
         calculate the log-probability that a symptom is activated/not activated (depending on its observed value), given its parent values 
         - sample: datapoint (dict) containing symptom and parent values as tensors
         """
+        def parent_value(parent):
+            if parent == 'fever_low':
+                return torch.where(sample["fever"] == 1, torch.ones_like(sample["fever"]), torch.zeros_like(sample["fever"]))
+            elif parent == 'fever_high':
+                return torch.where(sample["fever"] == 2, torch.ones_like(sample["fever"]), torch.zeros_like(sample["fever"]))
+            else:
+                return sample[parent]
 
         if self.sigmoid:
             lambda_0 = torch.sigmoid(self.lambda_0) # constrain between 0 and 1 
@@ -70,7 +81,7 @@ class NoisyOr(torch.nn.Module):
             lambdas = self.lambdas
         
         y = sample[self.outcome] # select the outcome (symptom that is activated)
-        x = torch.stack([sample[parent] for parent in self.parents], dim=1) # select the parents and stack them into a tensor of dim (bs, n)
+        x = torch.stack([parent_value(parent) for parent in self.expanded_parents], dim=1) # select the parents and stack them into a tensor of dim (bs, n)
         
         prod = (1-lambda_0)*torch.prod((1-lambdas)**x, dim=1) # probability that symptom is not active 
         
@@ -122,43 +133,54 @@ class NoisyOr(torch.nn.Module):
         First row of table contains P(outcome = yes | parents)
         Second row of table contains P(outcome = no | parents)
         """
+        if 'fever' not in self.parents:
+            combinations = itertools.product([1, 0], repeat=len(self.parents))
 
-        combinations = itertools.product([1, 0], repeat=len(self.parents))
+            input = {parent:[] for parent in self.parents}
 
-        input = {parent:[] for parent in self.parents}
+            for comb in combinations: 
+                for i, parent in enumerate(self.parents): 
+                    input[parent].append(comb[i])
 
-        for comb in combinations: 
-            for i, parent in enumerate(self.parents): 
-                input[parent].append(comb[i])
+            input[self.outcome] = torch.ones(2**self.n)
+            input = {parent:torch.tensor(val) for parent, val in input.items()}
+        else:
+            input = {parent:[] for parent in self.parents}
 
-        input[self.outcome] = torch.ones(2**self.n)
-        input = {parent:torch.tensor(val) for parent, val in input.items()}
+            for f in [2, 1, 0]: # possible values for fever:
+                combinations = itertools.product([1, 0], repeat=len(self.parents)-1) # all parents except for fever
+                for comb in combinations: 
+                    for i, parent in enumerate(self.parents): 
+                        if parent == "fever": 
+                            input[parent].append(f)
+                        else: 
+                            input[parent].append(comb[i])
+
+            input[self.outcome] = torch.ones(len(input["fever"]))
+            input = {parent:torch.tensor(val) for parent, val in input.items()}
 
         p_pos = self.forward(input).exp() # prob(outcome | parents) for all combinations of parents
         p_neg = 1-p_pos
 
         cpt = torch.stack((p_pos, p_neg))
 
-        return cpt.detach().clone().numpy()
-    
+        return cpt.detach().clone().numpy()    
 
 class Antibiotics(torch.nn.Module):
     """
     Conditional probability distribution for Antibiotics variable, parameterized using a logistic regression model
     - outcome: name of variable we are modeling (antibiotics)
-    - parents: list of parent variables 
-    - incl_policy: whether to model policy variable (if True, then coeff[0] contains its weight)
+    - parents: list of parent variables
     - bias: logistic regression model bias (learned from data if None)
     - coeff: logistic regression model coefficients (learned from data if None)
     """
     
-    def __init__(self, outcome, parents, incl_policy=False, bias=None, coeff=None): 
+    def __init__(self, outcome, parents, bias=None, coeff=None): 
 
         super(Antibiotics, self).__init__()
         self.outcome = outcome # name of variable we are modeling
         self.parents = parents # parent variables
         self.n = len(parents) # number of parents
-        self.incl_policy = incl_policy # whether policy is included in the model
 
         # learnable parameters
         self.bias = torch.nn.Parameter(torch.rand(1)) if bias == None else torch.nn.Parameter(torch.tensor(bias)) # bias
@@ -175,16 +197,10 @@ class Antibiotics(torch.nn.Module):
 
         y = sample[self.outcome] # select the outcome (antibiotics)
         
-        if self.incl_policy: 
-            logit = self.bias + self.coeff[0]*sample["policy"] \
-                + self.coeff[1]*sample["dysp"] + self.coeff[2]*sample["cough"] \
-                + self.coeff[3]*sample["pain"] \
-                + self.coeff[4]*low_fever + self.coeff[5]*high_fever
-        else: 
-            logit = self.bias \
-                    + self.coeff[0]*sample["dysp"] + self.coeff[1]*sample["cough"] \
-                    + self.coeff[2]*sample["pain"] \
-                    + self.coeff[3]*low_fever + self.coeff[4]*high_fever
+        logit = self.bias + self.coeff[-2]*low_fever + self.coeff[-1]*high_fever
+        for i, parent in enumerate(self.parents[:-1]):
+            logit += self.coeff[i]*sample[parent]
+
         prob = torch.sigmoid(logit)
         log_p = torch.where(y==1, torch.log(prob), torch.log(1-prob))
 
@@ -260,21 +276,19 @@ class DaysAtHome(torch.nn.Module):
     Conditional probability distribution for days_at_home variable, parameterized using a Poisson regression model
     See also DaysAtHome class in data_generating_process.py
     - outcome: name of variable we are modeling (days_at_home)
-    - parents: list of parent variables 
-    - incl_self_empl: whether to model self-employed variable (if True, then coeff[0] contains its weight)
+    - parents: list of parent variables
     - bias_a0: bias for antibiotics = 0 regression model (learned from data if None)
     - coeff_a0: coefficients for antibiotics = 0 regression model (learned from data if None)
     - bias_a1: bias for antibiotics = 1 regression model (learned from data if None)
     - coeff_a1: coefficients for antibiotics = 1 regression model (learned from data if None)
     """
     
-    def __init__(self, outcome, parents, incl_self_empl=False, bias_a0=None, coeff_a0=None, bias_a1=None, coeff_a1=None): 
+    def __init__(self, outcome, parents, bias_a0=None, coeff_a0=None, bias_a1=None, coeff_a1=None): 
 
         super(DaysAtHome, self).__init__()
         self.outcome = outcome # name of variable we are modeling
         self.parents = parents # parent variables
         self.n = len(parents) # number of parents
-        self.incl_self_empl = incl_self_empl # whether self-employed is included in the model
 
         # learnable parameters antibiotics=0 model
         self.bias_a0 = torch.nn.Parameter(torch.rand(1)) if bias_a0 == None else torch.nn.Parameter(torch.tensor(bias_a0)) # bias
@@ -295,24 +309,12 @@ class DaysAtHome(torch.nn.Module):
 
         y = sample[self.outcome] # select the outcome (days at home)
         
-        if self.incl_self_empl: 
-            logit_a0 = self.bias_a0 + self.coeff_a0[0]*sample["self_empl"] \
-                + self.coeff_a0[1]*sample["dysp"] + self.coeff_a0[2]*sample["cough"] \
-                + self.coeff_a0[3]*sample["pain"] + self.coeff_a0[4]*sample["nasal"] \
-                + self.coeff_a0[5]*low_fever + self.coeff_a0[6]*high_fever
-            logit_a1 = self.bias_a1 + self.coeff_a1[0]*sample["self_empl"] \
-                    + self.coeff_a1[1]*sample["dysp"] + self.coeff_a1[2]*sample["cough"] \
-                    + self.coeff_a1[3]*sample["pain"] + self.coeff_a1[4]*sample["nasal"] \
-                    + self.coeff_a1[5]*low_fever + self.coeff_a1[6]*high_fever
-        else:
-            logit_a0 = self.bias_a0 \
-                    + self.coeff_a0[0]*sample["dysp"] + self.coeff_a0[1]*sample["cough"] \
-                    + self.coeff_a0[2]*sample["pain"] + self.coeff_a0[3]*sample["nasal"] \
-                    + self.coeff_a0[4]*low_fever + self.coeff_a0[5]*high_fever
-            logit_a1 = self.bias_a1 \
-                    + self.coeff_a1[0]*sample["dysp"] + self.coeff_a1[1]*sample["cough"] \
-                    + self.coeff_a1[2]*sample["pain"] + self.coeff_a1[3]*sample["nasal"] \
-                    + self.coeff_a1[4]*low_fever + self.coeff_a1[5]*high_fever
+        logit_a0 = self.bias_a0 + self.coeff_a0[-2]*low_fever + self.coeff_a0[-1]*high_fever
+        logit_a1 = self.bias_a1 + self.coeff_a1[-2]*low_fever + self.coeff_a1[-1]*high_fever
+        for i, parent in enumerate(self.parents[1:-1]):
+            logit_a0 += self.coeff_a0[i]*sample[parent]
+            logit_a1 += self.coeff_a1[i]*sample[parent]
+
         log_lambda = torch.where(sample["antibiotics"] == 1, logit_a1, logit_a0) # log(lambda), where labmda is mean of poisson distr
 
         log_p = y*log_lambda-log_lambda.exp()-torch.lgamma(y+1) # log of Poisson probability (k*log(lambda)-lambda-log(k!)), where k! = lgamma(k+1)
@@ -388,7 +390,7 @@ class DaysAtHome(torch.nn.Module):
 
         return cpt.detach().clone().numpy()
 
-class SynsumBayesianNetwork():
+class SimsumBayesianNetwork():
     """
     Parent class for TrainedBayesianNetwork and GroundTruthBayesianNetwork
     """
@@ -440,7 +442,7 @@ class SynsumBayesianNetwork():
         ev = {key:values[key] for key in evidence_keys}
 
         if "days_at_home" in evidence_keys: 
-            ev["days_at_home"] = SynsumBayesianNetwork.days_at_home_categories(ev["days_at_home"])
+            ev["days_at_home"] = SimsumBayesianNetwork.days_at_home_categories(ev["days_at_home"])
 
         v_ev = self.symptoms_virtual_evidence(values) if virtual_evidence else None
 
@@ -452,7 +454,7 @@ class SynsumBayesianNetwork():
 
         return prob    
 
-class TrainedBayesianNetwork(SynsumBayesianNetwork): 
+class TrainedBayesianNetwork(SimsumBayesianNetwork): 
     """ 
     Fully learn the Bayesian network from data.
     - df_train: dataframe containing training data
@@ -460,7 +462,7 @@ class TrainedBayesianNetwork(SynsumBayesianNetwork):
     """
 
     def __init__(self, df_train, seed):
-        super(SynsumBayesianNetwork, self).__init__()
+        super(SimsumBayesianNetwork, self).__init__()
 
         self.CPTs = {}
         self.df_train = df_train
@@ -542,7 +544,7 @@ class TrainedBayesianNetwork(SynsumBayesianNetwork):
         Learn logistic regression model for Antibiotics.
         """
 
-        self.antibio_model = Antibiotics("antibiotics", ["dysp", "cough", "pain", "fever"], incl_policy=False)
+        self.antibio_model = Antibiotics("antibiotics", ["dysp", "cough", "pain", "fever"])
         if len(self.df_train) > 4000:
             self.antibio_model.train(self.df_train, bs=50, lr=0.01, num_epochs=30)
         elif len(self.df_train) > 1000:
@@ -566,7 +568,7 @@ class TrainedBayesianNetwork(SynsumBayesianNetwork):
         Learn Poisson regression model for DaysAtHome.
         """
 
-        self.days_model = DaysAtHome("days_at_home", ["antibiotics", "dysp", "cough", "pain", "nasal", "fever"], incl_self_empl=False)
+        self.days_model = DaysAtHome("days_at_home", ["antibiotics", "dysp", "cough", "pain", "nasal", "fever"])
         if len(self.df_train) > 4000:
             self.days_model.train(self.df_train, bs=50, lr=0.01, num_epochs=30)
         elif len(self.df_train) > 300:
@@ -603,7 +605,7 @@ class TrainedBayesianNetwork(SynsumBayesianNetwork):
         self.learn_days_at_home()
     
 
-class GTBayesianNetwork(SynsumBayesianNetwork):
+class GTBayesianNetwork(SimsumBayesianNetwork):
     """
     Manually instantiate ground-truth Bayesian network as defined by an expert in SynSUM. 
     Do not learn any parameters from the data, but assume you know the exact data generating process. 
@@ -611,7 +613,7 @@ class GTBayesianNetwork(SynsumBayesianNetwork):
     """
         
     def __init__(self):
-        super(SynsumBayesianNetwork, self).__init__()
+        super(SimsumBayesianNetwork, self).__init__()
 
         cpd_dysp = TabularCPD(variable="dysp", variable_card=2, 
                           values = NoisyOr("dysp", ["asthma", "smoking", "COPD", "hay_fever", "pneu"], 0.05, [0.9, 0.3, 0.9, 0.2, 0.3]).get_CPT(),
@@ -695,13 +697,13 @@ class GTBayesianNetwork(SynsumBayesianNetwork):
                             state_names = {"season": ["winter", "summer"]})
         
         cpd_antibiotics = TabularCPD(variable="antibiotics", variable_card=2, 
-                        values = Antibiotics("antibiotics", ["policy", "dysp", "cough", "pain", "fever"], bias=-3., coeff=[2/2, 1.6/2, 1.33/2, 1.33/2, 1.8/2, 4.5/2], incl_policy=True).get_CPT(),
+                        values = Antibiotics("antibiotics", ["policy", "dysp", "cough", "pain", "fever"], bias=-3., coeff=[2/2, 1.6/2, 1.33/2, 1.33/2, 1.8/2, 4.5/2]).get_CPT(),
                     evidence=["fever", "policy", "dysp", "cough", "pain"], evidence_card=[3, 2, 2, 2, 2],
                     state_names={"antibiotics": ["yes", "no"], "fever":["high", "low", "none"], "policy":["yes", "no"], "dysp":["yes", "no"], "cough":["yes", "no"], "pain":["yes", "no"]})
 
         
         cpd_days_at_home = TabularCPD(variable="days_at_home", variable_card=16, 
-                        values = DaysAtHome("days_at_home", ["antibiotics", "self_empl", "dysp", "cough", "pain", "nasal", "fever"], incl_self_empl=True,
+                        values = DaysAtHome("days_at_home", ["antibiotics", "self_empl", "dysp", "cough", "pain", "nasal", "fever"],
                                             bias_a0 = 0.010, coeff_a0 = [-0.5, 0.64, 0.35, 0.47, 0.011, 0.81, 1.23],
                                             bias_a1 = 0.16, coeff_a1 = [-0.5, 0.51, 0.42, 0.26, 0.0051, 0.24, 0.57]).get_CPT(),
                     evidence=["fever", "antibiotics", "self_empl", "dysp", "cough", "pain", "nasal"], evidence_card=[3, 2, 2, 2, 2, 2, 2],
@@ -722,3 +724,446 @@ class GTBayesianNetwork(SynsumBayesianNetwork):
                           cpd_antibiotics, cpd_days_at_home)
         
         self.BN_model = BN_model
+
+class AdditionsBayesianNetwork(SimsumBayesianNetwork): 
+    """ 
+    BN with 3 new edges added to the structure:
+    ('pneu', 'antibiotics')
+    ('season', 'hay_fever')
+    ('fever', 'pain')
+    Fully learn the Bayesian network from data.
+    - df_train: dataframe containing training data
+    - seed: seed used for initialization of all parameters
+    """
+
+    def __init__(self, df_train, seed):
+        super(SimsumBayesianNetwork, self).__init__()
+
+        self.CPTs = {}
+        self.df_train = df_train
+
+        # set seeds
+        torch.manual_seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+
+    def learn_CPTs(self): 
+        """
+        Directly learn conditional probability table (CPTs) for variables asthma, smoking, COPD, season, 
+        hay fever, pneumonia, common cold and fever. 
+        """
+
+        state_names = {"asthma": ["yes", "no"], "smoking": ["yes", "no"],
+               "COPD": ["yes", "no"], "season": ["winter", "summer"], "hay_fever": ["yes", "no"], 
+               "pneu": ["yes", "no"], "common_cold": ["yes", "no"], "fever": ["high", "low", "none"]}
+        self.BN_model = BayesianNetwork([("asthma", "pneu"), ("smoking", "COPD"), ("COPD", "pneu"),
+                                ("season", "pneu"), ("season", "common_cold"), ("season", "hay_fever"),
+                                ("pneu", "fever"), ("common_cold", "fever")])
+
+        df_subset = self.df_train[["asthma", "pneu", "smoking", "COPD", "season", "common_cold", "fever", "hay_fever"]]
+
+        self.BN_model.fit(df_subset, estimator=BayesianEstimator, prior_type="K2", state_names=state_names)
+
+    def learn_noisy_ORs(self): 
+        """ 
+        Learn noisy-OR distributions for symptoms dysp, cough, pain and nasal.
+        """
+
+        parents = {"dysp": ["asthma", "smoking", "COPD", "hay_fever", "pneu"], 
+           "cough": ["asthma", "smoking", "COPD", "pneu", "common_cold"], 
+           "pain": ["COPD", "cough", "pneu", "common_cold", "fever"], 
+           "nasal": ["hay_fever", "common_cold"]}
+
+        CPTs = {}
+        self.noisy_OR_models = {}
+        for symptom in ["dysp", "cough", "pain", "nasal"]: 
+            model = NoisyOr(symptom, parents[symptom])
+            if len(self.df_train) > 500:
+                epochs = 10
+            elif len(self.df_train) >= 100: 
+                epochs = 50
+            else: 
+                epochs = 100
+            model.train(self.df_train, bs=50, lr=0.1, num_epochs=epochs)
+            self.noisy_OR_models[symptom] = model
+            CPTs[symptom] = model.get_CPT()
+
+        # add learned CPTs to BN
+
+        self.BN_model.add_edges_from([("asthma", "dysp"), ("smoking", "dysp"), ("COPD", "dysp"), ("pneu", "dysp"), ("hay_fever", "dysp"),
+                      ("asthma", "cough"), ("smoking", "cough"), ("COPD", "cough"), ("pneu", "cough"), ("common_cold", "cough"),
+                      ("cough", "pain"), ("pneu", "pain"), ("COPD", "pain"), ("common_cold", "pain"), ("fever", "pain"),
+                      ("common_cold", "nasal"), ("hay_fever", "nasal")])
+
+        cpd_dysp = TabularCPD(variable="dysp", variable_card=2, values = CPTs["dysp"],
+                    evidence=["asthma", "smoking", "COPD", "hay_fever", "pneu"], evidence_card=[2, 2, 2, 2, 2],
+                    state_names={"dysp":["yes", "no"], "asthma":["yes", "no"], "smoking":["yes", "no"], "COPD":["yes", "no"], "pneu":["yes", "no"], "hay_fever":["yes", "no"]})
+
+        cpd_cough = TabularCPD(variable="cough", variable_card=2, values = CPTs["cough"],
+                            evidence=["asthma", "smoking", "COPD", "pneu", "common_cold"], evidence_card=[2, 2, 2, 2, 2],
+                            state_names={"cough":["yes", "no"], "asthma":["yes", "no"], "smoking":["yes", "no"], "COPD":["yes", "no"], "pneu":["yes", "no"], "common_cold":["yes", "no"]})
+
+        cpd_pain = TabularCPD(variable="pain", variable_card=2, values = CPTs["pain"],
+                            evidence=["fever", "COPD", "cough", "pneu", "common_cold"], evidence_card=[3, 2, 2, 2, 2],
+                            state_names={"pain":["yes", "no"], "COPD":["yes", "no"], "cough":["yes", "no"], 
+                                         "fever":["high", "low", "none"],
+                                         "pneu":["yes", "no"], "common_cold":["yes", "no"]})
+
+        cpd_nasal = TabularCPD(variable="nasal", variable_card=2, values = CPTs["nasal"],
+                            evidence=["hay_fever", "common_cold"], evidence_card=[2, 2],
+                            state_names={"nasal":["yes", "no"], "hay_fever":["yes", "no"], "common_cold":["yes", "no"]})
+        
+        self.BN_model.add_cpds(cpd_dysp, cpd_cough, cpd_pain, cpd_nasal)
+
+    def learn_antibiotics(self): 
+        """ 
+        Learn logistic regression model for Antibiotics.
+        """
+
+        self.antibio_model = Antibiotics("antibiotics", ["dysp", "cough", "pain", "pneu", "fever"])
+        if len(self.df_train) > 4000:
+            self.antibio_model.train(self.df_train, bs=50, lr=0.01, num_epochs=30)
+        elif len(self.df_train) > 1000:
+            self.antibio_model.train(self.df_train, bs=50, lr=0.01, num_epochs=100)
+        elif len(self.df_train) >= 100:
+            self.antibio_model.train(self.df_train, bs=50, lr=0.05, num_epochs=100)
+        else:
+            self.antibio_model.train(self.df_train, bs=50, lr=0.05, num_epochs=200)
+        CPT = self.antibio_model.get_CPT()
+
+        self.BN_model.add_edges_from([("dysp", "antibiotics"), ("cough", "antibiotics"), ("pain", "antibiotics"),
+                                      ("pneu", "antibiotics"), ("fever", "antibiotics")])
+
+        cpd_antibiotics = TabularCPD(variable="antibiotics", variable_card=2, values = CPT,
+                    evidence=["fever", "dysp", "cough", "pain", "pneu"], evidence_card=[3, 2, 2, 2, 2],
+                    state_names={"antibiotics": ["yes", "no"], "fever":["high", "low", "none"], 
+                                 "pneu":["yes", "no"], "dysp":["yes", "no"], 
+                                 "cough":["yes", "no"], "pain":["yes", "no"]})
+
+        self.BN_model.add_cpds(cpd_antibiotics)
+
+    def learn_days_at_home(self): 
+        """ 
+        Learn Poisson regression model for DaysAtHome.
+        """
+
+        self.days_model = DaysAtHome("days_at_home", ["antibiotics", "dysp", "cough", "pain", "nasal", "fever"])
+        if len(self.df_train) > 4000:
+            self.days_model.train(self.df_train, bs=50, lr=0.01, num_epochs=30)
+        elif len(self.df_train) > 300:
+            self.days_model.train(self.df_train, bs=50, lr=0.01, num_epochs=100)
+        elif len(self.df_train) >= 100:
+            self.days_model.train(self.df_train, bs=50, lr=0.05, num_epochs=100)
+        else: 
+            self.days_model.train(self.df_train, bs=50, lr=0.05, num_epochs=200)
+        CPT = self.days_model.get_CPT()
+
+        self.BN_model.add_edges_from([("antibiotics", "days_at_home"), ("dysp", "days_at_home"), ("cough", "days_at_home"), ("pain", "days_at_home"), ("fever", "days_at_home"), ("nasal", "days_at_home")])
+
+        cpd_days_at_home = TabularCPD(variable="days_at_home", variable_card=16, values = CPT,
+                    evidence=["fever", "antibiotics", "dysp", "cough", "pain", "nasal"], evidence_card=[3, 2, 2, 2, 2, 2],
+                    state_names={"days_at_home": list([str(e) for e in range(15)])+[">=15"], "fever":["high", "low", "none"], "antibiotics":["yes", "no"], "dysp":["yes", "no"], "cough":["yes", "no"], "pain":["yes", "no"], "nasal":["yes", "no"]})
+        
+        self.BN_model.add_cpds(cpd_days_at_home)
+
+    def learn_full_BN(self, print_msg=False): 
+        """
+        Learn the full Bayesian network.
+        """
+        if print_msg:
+            print("learning CPTs...")
+        self.learn_CPTs()
+        if print_msg:
+            print("learning Noisy ORs...")
+        self.learn_noisy_ORs()
+        if print_msg:
+            print("learning Antibiotics...")
+        self.learn_antibiotics()
+        if print_msg:
+            print("learning Days at home...")
+        self.learn_days_at_home()
+
+class RemovalsBayesianNetwork(SimsumBayesianNetwork): 
+    """ 
+    BN with 3 edges removed from the structure:
+    ('smoking', 'COPD')
+    ('COPD', 'pain')
+    ('cough', 'days_at_home')
+    Fully learn the Bayesian network from data.
+    - df_train: dataframe containing training data
+    - seed: seed used for initialization of all parameters
+    """
+
+    def __init__(self, df_train, seed):
+        super(SimsumBayesianNetwork, self).__init__()
+
+        self.CPTs = {}
+        self.df_train = df_train
+
+        # set seeds
+        torch.manual_seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+
+    def learn_CPTs(self): 
+        """
+        Directly learn conditional probability table (CPTs) for variables asthma, smoking, COPD, season, 
+        hay fever, pneumonia, common cold and fever. 
+        """
+
+        state_names = {"asthma": ["yes", "no"], "smoking": ["yes", "no"],
+               "COPD": ["yes", "no"], "season": ["winter", "summer"], "hay_fever": ["yes", "no"], 
+               "pneu": ["yes", "no"], "common_cold": ["yes", "no"], "fever": ["high", "low", "none"]}
+        self.BN_model = BayesianNetwork([("asthma", "pneu"), ("COPD", "pneu"),
+                                ("season", "pneu"), ("season", "common_cold"), 
+                                ("pneu", "fever"), ("common_cold", "fever")])
+        self.BN_model.add_node("smoking")
+        self.BN_model.add_node("hay_fever")
+
+        df_subset = self.df_train[["asthma", "pneu", "smoking", "COPD", "season", "common_cold", "fever", "hay_fever"]]
+
+        self.BN_model.fit(df_subset, estimator=BayesianEstimator, prior_type="K2", state_names=state_names)
+
+    def learn_noisy_ORs(self): 
+        """ 
+        Learn noisy-OR distributions for symptoms dysp, cough, pain and nasal.
+        """
+
+        parents = {"dysp": ["asthma", "smoking", "COPD", "hay_fever", "pneu"], 
+           "cough": ["asthma", "smoking", "COPD", "pneu", "common_cold"], 
+           "pain": ["cough", "pneu", "common_cold"], 
+           "nasal": ["hay_fever", "common_cold"]}
+
+        CPTs = {}
+        self.noisy_OR_models = {}
+        for symptom in ["dysp", "cough", "pain", "nasal"]: 
+            model = NoisyOr(symptom, parents[symptom])
+            if len(self.df_train) > 500:
+                epochs = 10
+            elif len(self.df_train) >= 100: 
+                epochs = 50
+            else: 
+                epochs = 100
+            model.train(self.df_train, bs=50, lr=0.1, num_epochs=epochs)
+            self.noisy_OR_models[symptom] = model
+            CPTs[symptom] = model.get_CPT()
+
+        # add learned CPTs to BN
+
+        self.BN_model.add_edges_from([("asthma", "dysp"), ("smoking", "dysp"), ("COPD", "dysp"), ("pneu", "dysp"), ("hay_fever", "dysp"),
+                      ("asthma", "cough"), ("smoking", "cough"), ("COPD", "cough"), ("pneu", "cough"), ("common_cold", "cough"),
+                      ("cough", "pain"), ("pneu", "pain"), ("common_cold", "pain"), 
+                      ("common_cold", "nasal"), ("hay_fever", "nasal")])
+
+        cpd_dysp = TabularCPD(variable="dysp", variable_card=2, values = CPTs["dysp"],
+                    evidence=["asthma", "smoking", "COPD", "hay_fever", "pneu"], evidence_card=[2, 2, 2, 2, 2],
+                    state_names={"dysp":["yes", "no"], "asthma":["yes", "no"], "smoking":["yes", "no"], "COPD":["yes", "no"], "pneu":["yes", "no"], "hay_fever":["yes", "no"]})
+
+        cpd_cough = TabularCPD(variable="cough", variable_card=2, values = CPTs["cough"],
+                            evidence=["asthma", "smoking", "COPD", "pneu", "common_cold"], evidence_card=[2, 2, 2, 2, 2],
+                            state_names={"cough":["yes", "no"], "asthma":["yes", "no"], "smoking":["yes", "no"], "COPD":["yes", "no"], "pneu":["yes", "no"], "common_cold":["yes", "no"]})
+
+        cpd_pain = TabularCPD(variable="pain", variable_card=2, values = CPTs["pain"],
+                            evidence=["cough", "pneu", "common_cold"], evidence_card=[2, 2, 2],
+                            state_names={"pain":["yes", "no"], "cough":["yes", "no"], "pneu":["yes", "no"], "common_cold":["yes", "no"]})
+
+        cpd_nasal = TabularCPD(variable="nasal", variable_card=2, values = CPTs["nasal"],
+                            evidence=["hay_fever", "common_cold"], evidence_card=[2, 2],
+                            state_names={"nasal":["yes", "no"], "hay_fever":["yes", "no"], "common_cold":["yes", "no"]})
+        
+        self.BN_model.add_cpds(cpd_dysp, cpd_cough, cpd_pain, cpd_nasal)
+
+    def learn_antibiotics(self): 
+        """ 
+        Learn logistic regression model for Antibiotics.
+        """
+
+        self.antibio_model = Antibiotics("antibiotics", ["dysp", "cough", "pain", "fever"])
+        if len(self.df_train) > 4000:
+            self.antibio_model.train(self.df_train, bs=50, lr=0.01, num_epochs=30)
+        elif len(self.df_train) > 1000:
+            self.antibio_model.train(self.df_train, bs=50, lr=0.01, num_epochs=100)
+        elif len(self.df_train) >= 100:
+            self.antibio_model.train(self.df_train, bs=50, lr=0.05, num_epochs=100)
+        else:
+            self.antibio_model.train(self.df_train, bs=50, lr=0.05, num_epochs=200)
+        CPT = self.antibio_model.get_CPT()
+
+        self.BN_model.add_edges_from([("dysp", "antibiotics"), ("cough", "antibiotics"), ("pain", "antibiotics"), ("fever", "antibiotics")])
+
+        cpd_antibiotics = TabularCPD(variable="antibiotics", variable_card=2, values = CPT,
+                    evidence=["fever", "dysp", "cough", "pain"], evidence_card=[3, 2, 2, 2],
+                    state_names={"antibiotics": ["yes", "no"], "fever":["high", "low", "none"], "dysp":["yes", "no"], "cough":["yes", "no"], "pain":["yes", "no"]})
+
+        self.BN_model.add_cpds(cpd_antibiotics)
+
+    def learn_days_at_home(self): 
+        """ 
+        Learn Poisson regression model for DaysAtHome.
+        """
+
+        self.days_model = DaysAtHome("days_at_home", ["antibiotics", "dysp", "pain", "nasal", "fever"])
+        if len(self.df_train) > 4000:
+            self.days_model.train(self.df_train, bs=50, lr=0.01, num_epochs=30)
+        elif len(self.df_train) > 300:
+            self.days_model.train(self.df_train, bs=50, lr=0.01, num_epochs=100)
+        elif len(self.df_train) >= 100:
+            self.days_model.train(self.df_train, bs=50, lr=0.05, num_epochs=100)
+        else: 
+            self.days_model.train(self.df_train, bs=50, lr=0.05, num_epochs=200)
+        CPT = self.days_model.get_CPT()
+
+        self.BN_model.add_edges_from([("antibiotics", "days_at_home"), ("dysp", "days_at_home"), ("pain", "days_at_home"), ("fever", "days_at_home"), ("nasal", "days_at_home")])
+
+        cpd_days_at_home = TabularCPD(variable="days_at_home", variable_card=16, values = CPT,
+                    evidence=["fever", "antibiotics", "dysp", "pain", "nasal"], evidence_card=[3, 2, 2, 2, 2],
+                    state_names={"days_at_home": list([str(e) for e in range(15)])+[">=15"], "fever":["high", "low", "none"], "antibiotics":["yes", "no"], "dysp":["yes", "no"], "pain":["yes", "no"], "nasal":["yes", "no"]})
+        
+        self.BN_model.add_cpds(cpd_days_at_home)
+
+    def learn_full_BN(self, print_msg=False): 
+        """
+        Learn the full Bayesian network.
+        """
+        if print_msg:
+            print("learning CPTs...")
+        self.learn_CPTs()
+        if print_msg:
+            print("learning Noisy ORs...")
+        self.learn_noisy_ORs()
+        if print_msg:
+            print("learning Antibiotics...")
+        self.learn_antibiotics()
+        if print_msg:
+            print("learning Days at home...")
+        self.learn_days_at_home()
+
+class FlipsBayesianNetwork(SimsumBayesianNetwork): 
+    """ 
+    BN with 3 edges flipped in the structure:
+    ('antibiotics', 'fever')
+    ('antibiotics', 'pain')
+    ('antibiotics', 'dyspnea')
+    Fully learn the Bayesian network from data.
+    - df_train: dataframe containing training data
+    - seed: seed used for initialization of all parameters
+    """
+
+    def __init__(self, df_train, seed):
+        super(SimsumBayesianNetwork, self).__init__()
+
+        self.CPTs = {}
+        self.df_train = df_train
+
+        # set seeds
+        torch.manual_seed(seed)
+        random.seed(seed)
+        np.random.seed(seed)
+
+    def learn_CPTs(self): 
+        """
+        Directly learn conditional probability table (CPTs) for variables asthma, smoking, COPD, season, 
+        hay fever, pneumonia, common cold and fever. 
+        """
+
+        state_names = {"asthma": ["yes", "no"], "smoking": ["yes", "no"],
+               "COPD": ["yes", "no"], "season": ["winter", "summer"], "hay_fever": ["yes", "no"], 
+               "pneu": ["yes", "no"], "common_cold": ["yes", "no"], "fever": ["high", "low", "none"],
+               "antibiotics": ["yes", "no"], "cough": ["yes", "no"]}
+        self.BN_model = BayesianNetwork([("asthma", "pneu"), ("smoking", "COPD"), ("COPD", "pneu"),
+                                ("season", "pneu"), ("season", "common_cold"), ("cough", "antibiotics"),
+                                ("pneu", "fever"), ("common_cold", "fever"), ("antibiotics", "fever")])
+        self.BN_model.add_node("hay_fever")
+
+        df_subset = self.df_train[["asthma", "pneu", "smoking", "COPD", "season", "common_cold", "fever", "hay_fever", "antibiotics", "cough"]]
+
+        self.BN_model.fit(df_subset, estimator=BayesianEstimator, prior_type="K2", state_names=state_names)
+
+    def learn_noisy_ORs(self): 
+        """ 
+        Learn noisy-OR distributions for symptoms dysp, cough, pain and nasal.
+        """
+
+        parents = {"dysp": ["asthma", "smoking", "COPD", "hay_fever", "pneu", "antibiotics"], 
+           "cough": ["asthma", "smoking", "COPD", "pneu", "common_cold"], 
+           "pain": ["COPD", "cough", "pneu", "common_cold", "antibiotics"], 
+           "nasal": ["hay_fever", "common_cold"]}
+
+        CPTs = {}
+        self.noisy_OR_models = {}
+        for symptom in ["dysp", "cough", "pain", "nasal"]: 
+            model = NoisyOr(symptom, parents[symptom])
+            if len(self.df_train) > 500:
+                epochs = 10
+            elif len(self.df_train) >= 100: 
+                epochs = 50
+            else: 
+                epochs = 100
+            model.train(self.df_train, bs=50, lr=0.1, num_epochs=epochs)
+            self.noisy_OR_models[symptom] = model
+            CPTs[symptom] = model.get_CPT()
+
+        # add learned CPTs to BN
+
+        self.BN_model.add_edges_from([("asthma", "dysp"), ("smoking", "dysp"), ("COPD", "dysp"), ("pneu", "dysp"), ("hay_fever", "dysp"), ("antibiotics", "dysp"),
+                      ("asthma", "cough"), ("smoking", "cough"), ("COPD", "cough"), ("pneu", "cough"), ("common_cold", "cough"),
+                      ("cough", "pain"), ("pneu", "pain"), ("COPD", "pain"), ("common_cold", "pain"), ("antibiotics", "pain"),
+                      ("common_cold", "nasal"), ("hay_fever", "nasal")])
+
+        cpd_dysp = TabularCPD(variable="dysp", variable_card=2, values = CPTs["dysp"],
+                    evidence=["asthma", "smoking", "COPD", "hay_fever", "pneu", "antibiotics"], evidence_card=[2, 2, 2, 2, 2, 2],
+                    state_names={"dysp":["yes", "no"], "asthma":["yes", "no"], "smoking":["yes", "no"], "COPD":["yes", "no"], 
+                                 "pneu":["yes", "no"], "hay_fever":["yes", "no"], "antibiotics":["yes", "no"]})
+
+        cpd_cough = TabularCPD(variable="cough", variable_card=2, values = CPTs["cough"],
+                            evidence=["asthma", "smoking", "COPD", "pneu", "common_cold"], evidence_card=[2, 2, 2, 2, 2],
+                            state_names={"cough":["yes", "no"], "asthma":["yes", "no"], "smoking":["yes", "no"], "COPD":["yes", "no"], "pneu":["yes", "no"], "common_cold":["yes", "no"]})
+
+        cpd_pain = TabularCPD(variable="pain", variable_card=2, values = CPTs["pain"],
+                            evidence=["COPD", "cough", "pneu", "common_cold", "antibiotics"], evidence_card=[2, 2, 2, 2, 2],
+                            state_names={"pain":["yes", "no"], "COPD":["yes", "no"], "cough":["yes", "no"], 
+                                         "pneu":["yes", "no"], "common_cold":["yes", "no"], "antibiotics":["yes", "no"]})
+
+        cpd_nasal = TabularCPD(variable="nasal", variable_card=2, values = CPTs["nasal"],
+                            evidence=["hay_fever", "common_cold"], evidence_card=[2, 2],
+                            state_names={"nasal":["yes", "no"], "hay_fever":["yes", "no"], "common_cold":["yes", "no"]})
+        
+        self.BN_model.add_cpds(cpd_dysp, cpd_cough, cpd_pain, cpd_nasal)
+
+    def learn_days_at_home(self): 
+        """ 
+        Learn Poisson regression model for DaysAtHome.
+        """
+
+        self.days_model = DaysAtHome("days_at_home", ["antibiotics", "dysp", "cough", "pain", "nasal", "fever"])
+        if len(self.df_train) > 4000:
+            self.days_model.train(self.df_train, bs=50, lr=0.01, num_epochs=30)
+        elif len(self.df_train) > 300:
+            self.days_model.train(self.df_train, bs=50, lr=0.01, num_epochs=100)
+        elif len(self.df_train) >= 100:
+            self.days_model.train(self.df_train, bs=50, lr=0.05, num_epochs=100)
+        else: 
+            self.days_model.train(self.df_train, bs=50, lr=0.05, num_epochs=200)
+        CPT = self.days_model.get_CPT()
+
+        self.BN_model.add_edges_from([("antibiotics", "days_at_home"), ("dysp", "days_at_home"), ("cough", "days_at_home"), ("pain", "days_at_home"), ("fever", "days_at_home"), ("nasal", "days_at_home")])
+
+        cpd_days_at_home = TabularCPD(variable="days_at_home", variable_card=16, values = CPT,
+                    evidence=["fever", "antibiotics", "dysp", "cough", "pain", "nasal"], evidence_card=[3, 2, 2, 2, 2, 2],
+                    state_names={"days_at_home": list([str(e) for e in range(15)])+[">=15"], "fever":["high", "low", "none"], "antibiotics":["yes", "no"], "dysp":["yes", "no"], "cough":["yes", "no"], "pain":["yes", "no"], "nasal":["yes", "no"]})
+        
+        self.BN_model.add_cpds(cpd_days_at_home)
+
+    def learn_full_BN(self, print_msg=False): 
+        """
+        Learn the full Bayesian network.
+        """
+        if print_msg:
+            print("learning CPTs...")
+        self.learn_CPTs()
+        if print_msg:
+            print("learning Noisy ORs...")
+        self.learn_noisy_ORs()
+        if print_msg:
+            print("learning Days at home...")
+        self.learn_days_at_home()

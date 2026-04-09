@@ -294,7 +294,7 @@ class ConsistentBNTextModel():
 
 
 class EnsembleModel:
-    def __init__(self, sympt, model_type="mlp", learning_rate=0.01, max_iter=1000, seed=2024):
+    def __init__(self, sympt, model_type="mlp", learning_rate=0.01, max_iter=1000, seed=2024, text_label="text_prob"):
         """
         Initialize the ensemble model.
         
@@ -306,6 +306,7 @@ class EnsembleModel:
         """
         self.sympt = sympt
         self.model_type = model_type.lower()
+        self.text_label = text_label
         
         if self.model_type == "mlp":
             # fever: 6 inputs, 4 hidden states, 3 outputs
@@ -326,10 +327,10 @@ class EnsembleModel:
         Train the model using the calibration dataset.
 
         Parameters:
-        - df: Pandas DataFrame containing "BN_prob", self.text_prob_label, and symptom labels
+        - df: Pandas DataFrame containing "BN_prob", "text_prob", and symptom labels
         """
         p_BN = df["BN_prob"].to_numpy()
-        p_text = df[self.text_prob_label].to_numpy()
+        p_text = df[self.text_label].to_numpy()
         y = df[self.sympt].to_numpy()
         if self.sympt == "fever": 
             p_BN = np.vstack(p_BN)
@@ -353,7 +354,7 @@ class EnsembleModel:
         - Combined probability (float)
         """
         p_BN = row["BN_prob"]
-        p_text = row[self.text_prob_label]
+        p_text = row[self.text_label]
         if self.sympt == "fever":
             X_input = np.concatenate([p_BN, p_text]).reshape(1,6)  # Prepare input
             return self.model.predict_proba(X_input)[0] # probability of all 3 classes
