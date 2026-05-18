@@ -1,7 +1,5 @@
 # Patient-level Information Extraction by Consistent Integration of Textual and Tabular Evidence
 
-Paper will be released soon. (Make repository public when paper on Arxiv!)
-
 ## Overview
 
 We propose a method for multi-modal patient-level information extraction that leverages both the tabular structured features already available in the patient's EHR -- which we model with an expert-informed Bayesian network -- as well as clinical notes describing the patient's symptoms -- from which we extract concepts using a neural classifier. We propose the use of virtual evidence and a consistency node to combine the predictions from both models in a probabilistic way. The figure below shows an overview of our method. 
